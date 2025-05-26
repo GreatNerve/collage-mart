@@ -1,0 +1,265 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String          @id @default(cuid())
+  name          String?
+  email         String          @unique
+  emailVerified DateTime?
+  image         String?
+  role          Role            @default(USER)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  accounts      Account[]
+  Authenticator Authenticator[]
+  sessions      Session[]
+  Item          Item[]
+  ItemView      ItemView[]
+
+  ItemReport ItemReport[]
+
+  sentMessages  ItemMessage[]             @relation("SentMessages")
+  conversations ConversationParticipant[]
+}
+
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([provider, providerAccountId])
+}
+
+model Session {
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+}
+
+model Authenticator {
+  credentialID         String  @unique
+  userId               String
+  providerAccountId    String
+  credentialPublicKey  String
+  counter              Int
+  credentialDeviceType String
+  credentialBackedUp   Boolean
+  transports           String?
+  user                 User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, credentialID])
+}
+
+model ItemCategory {
+  id          String         @id @default(cuid())
+  name        String         @unique
+  description String?
+  parentId    String?
+  images      String[]
+  parent      ItemCategory?  @relation("ItemCategoryParent", fields: [parentId], references: [id], onDelete: SetNull)
+  children    ItemCategory[] @relation("ItemCategoryParent")
+  items       Item[]         @relation("ItemCategoryItems")
+
+  isActive   Boolean        @default(true)
+  isFeatured  Boolean        @default(false)
+}
+
+model Item {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  price       Float
+  images      String[]
+
+
+  isFeatured  Boolean @default(false)
+  isActive    Boolean @default(true)
+
+  
+  category   ItemCategory? @relation("ItemCategoryItems", fields: [categoryId], references: [id], onDelete: SetNull)
+  categoryId String?
+
+  condition            ItemCondition @default(USED)
+  conditionDescription String?
+
+  // Metadata
+  longitude Float?
+  latitude  Float?
+  location  String?
+  pinCode   String?
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+
+  slug String @unique
+
+  status ItemStatus @default(AVAILABLE)
+
+  views ItemView[]
+
+  activity ItemAction[] @relation("ItemAction")
+
+  reports ItemReport[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conversations Conversation[]
+
+  @@index([userId, status], name: "item_user_status_index")
+}
+
+model ItemAction {
+  id        String     @id @default(cuid())
+  item      Item       @relation("ItemAction", fields: [itemId], references: [id], onDelete: Cascade)
+  itemId    String
+  action    ItemStatus
+  createdAt DateTime   @default(now())
+
+  @@index([itemId, action], name: "item_action_item_user_action_index")
+}
+
+model ItemView {
+  id     String @id @default(cuid())
+  item   Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  itemId String
+
+  ipAddress String?
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([itemId, userId, ipAddress], name: "item_view_item_user_ip_index")
+}
+
+model ItemReport {
+  id          String           @id @default(cuid())
+  item        Item             @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  itemId      String
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      String
+  reason      ItemReportReason
+  description String?
+  isValidated Boolean          @default(false)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([itemId, userId], name: "item_report_item_user_index")
+}
+
+model Conversation {
+  id     String @id @default(cuid())
+  item   Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  itemId String
+
+  type ConversationType @default(USER)
+
+  participants ConversationParticipant[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages ItemMessage[]
+
+  @@index([itemId], name: "conversation_item_index")
+}
+
+model ConversationParticipant {
+  id             String       @id @default(cuid())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversationId String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId         String
+  joinedAt       DateTime     @default(now())
+
+  @@unique([conversationId, userId])
+  @@index([conversationId], name: "conversation_participant_conversation_index")
+  @@index([userId], name: "conversation_participant_user_index")
+}
+
+model ItemMessage {
+  id             String       @id @default(cuid())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversationId String
+  content        String
+  images         String[]
+  sender         User         @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  senderId       String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  isRead         Boolean      @default(false)
+
+  @@index([conversationId, senderId], name: "item_message_item_sender_receiver_index")
+}
+
+enum Role {
+  USER
+  ADMIN
+  BLOCKED
+}
+
+enum ItemCondition {
+  NEW
+  USED
+  REFURBISHED
+  DAMAGED
+}
+
+enum ItemStatus {
+  AVAILABLE
+  SOLD
+  RESERVED
+  UNAVAILABLE
+  DELETED
+  REMOVED
+}
+
+enum ItemReportReason {
+  SPAM
+  INAPPROPRIATE
+  FRAUD
+  OTHER
+}
+
+enum ConversationType {
+  USER
+  SUPPORT
+  GROUP
+}
+
+enum ItemMessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  AUDIO
+}
