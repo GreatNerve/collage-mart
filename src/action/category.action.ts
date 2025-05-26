@@ -3,13 +3,13 @@
 import { auth } from "@/auth/auth";
 import { hasPermission } from "@/lib/permission";
 import { prisma } from "@/lib/prisma";
-import { type Cuid, cuidSchema } from "@/schema/common.schema";
 import {
   type ItemCategoryCreate,
   itemCategoryCreateSchema,
   type ItemCategoryUpdate,
   itemCategoryUpdateSchema,
-} from "@/schema/itemCategory.schema";
+} from "@/schema/category.schema";
+import { type Cuid, cuidSchema } from "@/schema/common.schema";
 import { type ApiResponse, type ItemCategoryType } from "@/types/common";
 
 export const createItemCategory = async (

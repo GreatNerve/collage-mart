@@ -1,5 +1,5 @@
-import { User } from "next-auth";
 import { type ItemType } from "@/types/common";
+import { User } from "next-auth";
 type Role = "USER" | "ADMIN" | "BLOCKED";
 
 type PermissionType =

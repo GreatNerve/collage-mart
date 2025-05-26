@@ -89,22 +89,20 @@ model ItemCategory {
   children    ItemCategory[] @relation("ItemCategoryParent")
   items       Item[]         @relation("ItemCategoryItems")
 
-  isActive   Boolean        @default(true)
-  isFeatured  Boolean        @default(false)
+  isActive   Boolean @default(true)
+  isFeatured Boolean @default(false)
 }
 
 model Item {
   id          String   @id @default(cuid())
   name        String
   description String?
-  price       Float
   images      String[]
+  price       Float
 
+  isFeatured Boolean @default(false)
+  isActive   Boolean @default(true)
 
-  isFeatured  Boolean @default(false)
-  isActive    Boolean @default(true)
-
-  
   category   ItemCategory? @relation("ItemCategoryItems", fields: [categoryId], references: [id], onDelete: SetNull)
   categoryId String?
 
