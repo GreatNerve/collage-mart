@@ -47,9 +47,7 @@ export const itemCreateSchema = z.object({
     .string()
     .min(1, "Slug is required")
     .max(100, "Slug must be at most 100 characters long")
-    .transform((val) =>
-      normalizeSlug(val)
-    )
+    .transform((val) => normalizeSlug(val))
     .optional(),
 });
 

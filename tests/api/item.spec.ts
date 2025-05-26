@@ -38,7 +38,9 @@ test.describe.serial("Item API - CRUD Operations", () => {
     createdItemIds.push(testItemId);
   });
 
-  test("Should fail to create item with duplicate slug", async ({ request }) => {
+  test("Should fail to create item with duplicate slug", async ({
+    request,
+  }) => {
     const response = await request.post("/api/item", {
       data: {
         name: `Duplicate ${faker.commerce.productName()}`,
