@@ -1,5 +1,6 @@
 import { type ItemType } from "@/types/common";
 import { User } from "next-auth";
+
 type Role = "USER" | "ADMIN" | "BLOCKED";
 
 type PermissionType =
@@ -9,23 +10,45 @@ type PermissionType =
   | "DELETE"
   | "UPDATE:OWN"
   | "DELETE:OWN";
+
 type ResourceType = "ITEM" | "CATEGORY";
 
+type ResourceDataTypeMap = {
+  ITEM: {
+    "UPDATE:OWN": ItemType;
+    "DELETE:OWN": ItemType;
+  };
+  CATEGORY: undefined;
+};
+
+type GetResourceData<
+  T extends ResourceType,
+  P extends PermissionType,
+> = P extends keyof ResourceDataTypeMap[T]
+  ? ResourceDataTypeMap[T][P]
+  : undefined;
+
+type ResourceChecker<T extends ResourceType, P extends PermissionType> = (
+  user: User,
+  resource: GetResourceData<T, P>
+) => boolean;
+
+type ResourcePermissions<T extends ResourceType> = {
+  [K in PermissionType]?: boolean | ResourceChecker<T, K>;
+};
+
 type Permission = {
-  [key in Role]: {
-    [key in ResourceType]?: {
-      [key in PermissionType]?:
-        | boolean
-        | ((user: User, resource?: unknown) => boolean);
-    };
+  [R in Role]: {
+    [T in ResourceType]?: ResourcePermissions<T>;
   };
 };
 
-const ItemOWNChecker = (user: User, resource?: unknown): boolean => {
+const ItemOWNChecker = <P extends keyof ResourceDataTypeMap["ITEM"]>(
+  user: User,
+  resource: ResourceDataTypeMap["ITEM"][P]
+): boolean => {
   if (!user || !resource) return false;
-
-  const item = resource as ItemType;
-  return user.id === item.userId;
+  return user.id === resource.userId;
 };
 
 const permissions: Permission = {
@@ -40,6 +63,9 @@ const permissions: Permission = {
     },
     CATEGORY: {
       VIEW: true,
+      CREATE: true,
+      UPDATE: false,
+      DELETE: false,
     },
   },
   ADMIN: {
@@ -59,22 +85,33 @@ const permissions: Permission = {
   BLOCKED: {},
 };
 
-export const hasPermission = (
+function hasPermission<T extends ResourceType, P extends PermissionType>(
   user: User,
-  resource: ResourceType,
-  permission: PermissionType,
-  resourceData?: unknown
-): boolean => {
-  if (!user || !user.role) return false;
+  resource: T,
+  permission: P,
+  ...args: GetResourceData<T, P> extends undefined
+    ? []
+    : [resourceData: GetResourceData<T, P>]
+): boolean {
+  if (!user?.role) return false;
 
   const rolePermissions = permissions[user.role as Role];
-  if (!rolePermissions || !rolePermissions[resource]) return false;
+  if (!rolePermissions?.[resource]) return false;
 
   const resourcePermissions = rolePermissions[resource];
   if (!resourcePermissions) return false;
+
   const permissionCheck = resourcePermissions[permission];
+  if (!permissionCheck) return false;
+
   if (typeof permissionCheck === "function") {
+    const resourceData = args[0];
+    if (resourceData === undefined) return false;
     return permissionCheck(user, resourceData);
   }
-  return !!permissionCheck;
-};
+
+  return true;
+}
+
+export { hasPermission };
+export type { PermissionType, ResourceDataTypeMap, ResourceType, Role };

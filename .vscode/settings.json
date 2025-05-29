@@ -2,5 +2,6 @@
   "cSpell.words": ["codegen", "cuid", "UNCATEGORIZED"],
   "[prisma]": {
     "editor.defaultFormatter": "Prisma.prisma"
-  }
+  },
+  "github.copilot.chat.followUps": "always"
 }
