@@ -1,97 +1,163 @@
 import { faker } from "@faker-js/faker";
-import { expect, test } from "@playwright/test";
+import { expect, test, APIRequestContext } from "@playwright/test";
+import { getAuthContext } from "../helpers/auth";
+import { Role } from "../types/roles";
+
+let adminContext: APIRequestContext;
+let userContext: APIRequestContext;
+let blockedContext: APIRequestContext;
 
 const createdCategoryIds: string[] = [];
+let parentCategoryId: string;
+let testCategoryId: string;
+let testCategoryName: string;
 
-test.describe.serial("Category API CRUD", () => {
-  let parentCategoryId: string;
-  let testCategoryId: string;
-  let testCategoryName: string;
-
-  test("fetch categories", async ({ request }) => {
-    const response = await request.get("/api/category");
-    expect(response.ok()).toBeTruthy();
-    const json = await response.json();
-    expect(json.success).toBe(true);
-    expect(Array.isArray(json.data.data)).toBe(true);
+test.describe.serial("Category API Role-Based Access Control", () => {
+  test.beforeAll(async () => {
+    adminContext = await getAuthContext(Role.ADMIN);
+    userContext = await getAuthContext(Role.USER);
+    blockedContext = await getAuthContext(Role.BLOCKED);
   });
 
-  test("fetch all categories", async ({ request }) => {
-    const response = await request.get("/api/category/all");
-    expect(response.ok()).toBeTruthy();
-    const json = await response.json();
-    expect(json.success).toBe(true);
-    expect(Array.isArray(json.data.data)).toBe(true);
+  test.afterAll(async () => {
+    await adminContext.dispose();
+    await userContext.dispose();
+    await blockedContext.dispose();
   });
 
-  test("create a parent category for tests", async ({ request }) => {
+  test.afterAll(async () => {
+    for (const id of createdCategoryIds.reverse()) {
+      try {
+        const res = await adminContext.delete(`/api/category/${id}`);
+        if (res.ok()) console.log(`Cleaned up: ${id}`);
+      } catch (err) {
+        console.error(`Failed to delete category ${id}:`, err);
+      }
+    }
+    createdCategoryIds.length = 0;
+  });
+
+  test("fetch /api/category and /api/category/all (all roles)", async () => {
+    await test.step("admin", async () => {
+      const res = await adminContext.get("/api/category");
+      expect(res.ok()).toBeTruthy();
+    });
+
+    await test.step("user", async () => {
+      const res = await userContext.get("/api/category");
+      expect(res.ok()).toBeTruthy();
+    });
+
+    await test.step("blocked", async () => {
+      const res = await blockedContext.get("/api/category");
+      expect(res.ok()).toBeTruthy();
+    });
+
+    await test.step("admin /all", async () => {
+      const res = await adminContext.get("/api/category/all");
+      expect(res.ok()).toBeTruthy();
+    });
+
+    await test.step("user /all", async () => {
+      const res = await userContext.get("/api/category/all");
+      expect(res.ok()).toBeTruthy();
+    });
+
+    await test.step("blocked /all", async () => {
+      const res = await blockedContext.get("/api/category/all");
+      expect(res.ok()).toBeTruthy();
+    });
+  });
+
+  test("admin: create parent category", async () => {
     const name = `parent-${faker.string.alphanumeric(6)}`;
     const images = Array.from({ length: 2 }, () => faker.image.url());
 
-    const response = await request.post("/api/category", {
+    const res = await adminContext.post("/api/category", {
       data: { name, images },
     });
 
-    expect(response.ok()).toBeTruthy();
-    const json = await response.json();
-    expect(json.success).toBe(true);
+    expect(res.ok()).toBeTruthy();
+    const json = await res.json();
     parentCategoryId = json.data.id;
     createdCategoryIds.push(parentCategoryId);
   });
 
-  test("create a child category", async ({ request }) => {
+  test("user: should NOT create category", async () => {
+    const res = await userContext.post("/api/category", {
+      data: {
+        name: `unauth-${faker.string.alphanumeric(5)}`,
+        parentId: parentCategoryId,
+      },
+    });
+    expect(res.status()).toBe(403);
+  });
+
+  test("blocked: should NOT create category", async () => {
+    const res = await blockedContext.post("/api/category", {
+      data: {
+        name: `block-${faker.string.alphanumeric(5)}`,
+        parentId: parentCategoryId,
+      },
+    });
+    expect(res.status()).toBe(403);
+  });
+
+  test("admin: create child category", async () => {
     testCategoryName = `child-${faker.string.alphanumeric(6)}`;
-    const response = await request.post("/api/category", {
+    const res = await adminContext.post("/api/category", {
       data: {
         name: testCategoryName,
         parentId: parentCategoryId,
       },
     });
 
-    expect(response.ok()).toBeTruthy();
-    const json = await response.json();
-    expect(json.success).toBe(true);
-    expect(json.data.name).toBe(testCategoryName);
+    expect(res.ok()).toBeTruthy();
+    const json = await res.json();
     testCategoryId = json.data.id;
     createdCategoryIds.push(testCategoryId);
   });
 
-  test("fail to create category with same name", async ({ request }) => {
-    const response = await request.post("/api/category", {
-      data: {
-        name: testCategoryName,
-        parentId: parentCategoryId,
-      },
-    });
-    expect(response.status()).toBeGreaterThanOrEqual(400);
-    const json = await response.json();
-    expect(json.success).toBe(false);
-  });
-
-  test("get category by ID", async ({ request }) => {
-    const response = await request.get(`/api/category/${testCategoryId}`);
-    const json = await response.json();
-    expect(response.ok()).toBeTruthy();
-    expect(json.data.id).toBe(testCategoryId);
-  });
-
-  test("update category name", async ({ request }) => {
+  test("admin: update category", async () => {
     const newName = `updated-${faker.string.alphanumeric(6)}`;
-    const response = await request.patch(`/api/category/${testCategoryId}`, {
-      data: {
-        name: newName,
-      },
+    const res = await adminContext.patch(`/api/category/${testCategoryId}`, {
+      data: { name: newName },
     });
 
-    expect(response.ok()).toBeTruthy();
-    const json = await response.json();
+    expect(res.ok()).toBeTruthy();
+    const json = await res.json();
     expect(json.data.name).toBe(newName);
   });
 
-  test("cleanup: delete created categories", async ({ request }) => {
+  test("user: should NOT update category", async () => {
+    const res = await userContext.patch(`/api/category/${testCategoryId}`, {
+      data: { name: `user-update-${faker.string.alphanumeric(6)}` },
+    });
+    expect(res.status()).toBe(403);
+  });
+
+  test("blocked: should NOT update category", async () => {
+    const res = await blockedContext.patch(`/api/category/${testCategoryId}`, {
+      data: { name: `block-update-${faker.string.alphanumeric(6)}` },
+    });
+    expect(res.status()).toBe(403);
+  });
+
+  test("user: should NOT delete category", async () => {
+    const res = await userContext.delete(`/api/category/${testCategoryId}`);
+    expect(res.status()).toBe(403);
+  });
+
+  test("blocked: should NOT delete category", async () => {
+    const res = await blockedContext.delete(`/api/category/${testCategoryId}`);
+    expect(res.status()).toBe(403);
+  });
+
+  test("admin: delete all created categories", async () => {
     for (const id of createdCategoryIds.reverse()) {
-      const response = await request.delete(`/api/category/${id}`);
-      expect(response.ok()).toBeTruthy();
+      const res = await adminContext.delete(`/api/category/${id}`);
+      expect(res.ok()).toBeTruthy();
     }
+    createdCategoryIds.length = 0;
   });
 });

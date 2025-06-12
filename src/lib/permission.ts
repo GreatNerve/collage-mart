@@ -1,7 +1,12 @@
-import { type CategoryType, type ItemType } from "@/types/common";
+import { ValidRoles } from "@/constant/common";
+import {
+  type CategoryType,
+  type ItemType,
+  type RoleType,
+} from "@/types/common";
 import { User } from "next-auth";
 
-type Role = "USER" | "ADMIN" | "BLOCKED";
+type Role = RoleType;
 
 type PermissionType =
   | "VIEW"
@@ -49,7 +54,6 @@ type Permission = {
   };
 };
 
-export const ValidRoles: Role[] = ["USER", "ADMIN", "BLOCKED"];
 export const ValidPermissions: PermissionType[] = [
   "VIEW",
   "CREATE",
@@ -130,7 +134,7 @@ function hasPermission<T extends ResourceType, P extends PermissionType>(
 ): boolean {
   if (!user?.role) return false;
 
-  if (!ValidRoles.includes(user.role as Role)) return false;
+  if (!Object.values(ValidRoles).includes(user.role as Role)) return false;
   if (!ValidResources.includes(resource)) return false;
   if (!ValidPermissions.includes(permission)) return false;
 

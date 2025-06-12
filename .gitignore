@@ -50,3 +50,6 @@ node_modules/
 /playwright/.cache/
 
 /playwright.json
+admin.json
+user.json
+blocked.json
