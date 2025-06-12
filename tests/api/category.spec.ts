@@ -16,6 +16,14 @@ test.describe.serial("Category API CRUD", () => {
     expect(Array.isArray(json.data.data)).toBe(true);
   });
 
+  test("fetch all categories", async ({ request }) => {
+    const response = await request.get("/api/category/all");
+    expect(response.ok()).toBeTruthy();
+    const json = await response.json();
+    expect(json.success).toBe(true);
+    expect(Array.isArray(json.data.data)).toBe(true);
+  });
+
   test("create a parent category for tests", async ({ request }) => {
     const name = `parent-${faker.string.alphanumeric(6)}`;
     const images = Array.from({ length: 2 }, () => faker.image.url());

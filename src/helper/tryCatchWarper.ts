@@ -1,4 +1,5 @@
-import { type ApiResponse } from "@/types/common";
+import { ApiResponse } from "@/lib/api.response";
+import { handleError } from "@/lib/error/handleError";
 
 export async function tryCatchWrapper<T, A extends unknown[]>(
   fn: (...args: A) => Promise<ApiResponse<T>>,
@@ -12,21 +13,11 @@ export async function tryCatchWrapper<T, A extends unknown[]>(
         "Content-Type": "application/json",
       },
     });
-  } catch (error) {
-    console.error("Error in tryCatchWrapper:", error);
-    return new Response(
-      JSON.stringify({
-        success: false,
-        message: "Internal Server Error",
-        data: null,
-        statusCode: 500,
-      }),
-      {
-        status: 500,
-        headers: {
-          "Content-Type": "application/json",
-        },
-      }
-    );
+  } catch (error: unknown) {
+    const { payload, status } = handleError(error);
+    return new Response(JSON.stringify(payload), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 }

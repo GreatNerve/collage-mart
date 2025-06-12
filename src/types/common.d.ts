@@ -1,15 +1,16 @@
-import { ConversationParticipant, Item, ItemCategory } from "@prisma/client";
+import {
+  Category,
+  ConversationParticipant,
+  Item,
+  Prisma,
+} from "@prisma/client";
 
 export type ItemType = Item;
-export type ItemCategoryType = ItemCategory;
+export type CategoryType = Category;
+
+export type CategoryWhereType = Prisma.CategoryWhereInput;
+export type ItemWhereType = Prisma.ItemWhereInput;
 
 export type ConversationParticipantType = ConversationParticipant;
 
-type ApiResponse<T = null> = {
-  success: boolean;
-  message: string;
-  data: T | null;
-  statusCode: number;
-  code?: string;
-  error?: unknown;
-};
+

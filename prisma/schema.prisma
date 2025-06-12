@@ -25,8 +25,11 @@ model User {
 
   ItemReport ItemReport[]
 
+  CreatedCategory Category[] @relation("CategoryCreatedBy")
+
   sentMessages  ItemMessage[]             @relation("SentMessages")
   conversations ConversationParticipant[]
+  ItemAction    ItemAction[]
 }
 
 model Account {
@@ -79,18 +82,28 @@ model Authenticator {
   @@id([userId, credentialID])
 }
 
-model ItemCategory {
-  id          String         @id @default(cuid())
-  name        String         @unique
+model Category {
+  id          String     @id @default(cuid())
+  name        String     @unique
   description String?
   parentId    String?
   images      String[]
-  parent      ItemCategory?  @relation("ItemCategoryParent", fields: [parentId], references: [id], onDelete: SetNull)
-  children    ItemCategory[] @relation("ItemCategoryParent")
-  items       Item[]         @relation("ItemCategoryItems")
+  parent      Category?  @relation("CategoryParent", fields: [parentId], references: [id], onDelete: SetNull)
+  children    Category[] @relation("CategoryParent")
+  items       Item[]     @relation("CategoryItems")
+
+  userId String
+  user   User   @relation("CategoryCreatedBy", fields: [userId], references: [id], onDelete: Cascade)
 
   isActive   Boolean @default(true)
   isFeatured Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId], name: "category_user_index")
+  @@index([name], name: "category_name_index")
+  @@index([parentId], name: "category_parent_index")
 }
 
 model Item {
@@ -103,7 +116,7 @@ model Item {
   isFeatured Boolean @default(false)
   isActive   Boolean @default(true)
 
-  category   ItemCategory? @relation("ItemCategoryItems", fields: [categoryId], references: [id], onDelete: SetNull)
+  category   Category? @relation("CategoryItems", fields: [categoryId], references: [id], onDelete: SetNull)
   categoryId String?
 
   condition            ItemCondition @default(USED)
@@ -115,8 +128,8 @@ model Item {
   location  String?
   pinCode   String?
 
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   slug String @unique
 
@@ -133,15 +146,20 @@ model Item {
 
   conversations Conversation[]
 
-  @@index([userId, status], name: "item_user_status_index")
+  @@index([categoryId], name: "item_category_index")
+  @@index([userId], name: "item_user_index")
+  @@index([status], name: "item_status_index")
 }
 
 model ItemAction {
-  id        String     @id @default(cuid())
-  item      Item       @relation("ItemAction", fields: [itemId], references: [id], onDelete: Cascade)
-  itemId    String
-  action    ItemStatus
-  createdAt DateTime   @default(now())
+  id     String     @id @default(cuid())
+  item   Item       @relation("ItemAction", fields: [itemId], references: [id], onDelete: Cascade)
+  itemId String
+  action ItemStatus
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  createdAt DateTime @default(now())
 
   @@index([itemId, action], name: "item_action_item_user_action_index")
 }
@@ -164,8 +182,8 @@ model ItemReport {
   id          String           @id @default(cuid())
   item        Item             @relation(fields: [itemId], references: [id], onDelete: Cascade)
   itemId      String
-  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId      String
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   reason      ItemReportReason
   description String?
   isValidated Boolean          @default(false)

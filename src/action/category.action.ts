@@ -1,63 +1,53 @@
 "use server";
 
-import { auth } from "@/auth/auth";
+import { ApiResponse } from "@/lib/api.response";
+import { handleError } from "@/lib/error/handleError";
 import { hasPermission } from "@/lib/permission";
 import { prisma } from "@/lib/prisma";
+import { getUserServerActions } from "@/lib/user.dal";
 import {
-  type ItemCategoryCreate,
-  itemCategoryCreateSchema,
-  type ItemCategoryUpdate,
-  itemCategoryUpdateSchema,
+  type CategoryCreate,
+  categoryCreateSchema,
+  type CategoryUpdate,
+  categoryUpdateSchema,
 } from "@/schema/category.schema";
 import { type Cuid, cuidSchema } from "@/schema/common.schema";
-import { type ApiResponse, type ItemCategoryType } from "@/types/common";
+import {
+  type CategoryType,
+  CategoryWhereType,
+} from "@/types/common";
+import { HTTP_CODES } from "@/lib/error/custom.error";
 
-export const createItemCategory = async (
-  input: ItemCategoryCreate
-): Promise<ApiResponse<ItemCategoryType>> => {
-  const session = await auth();
-  if (!session || !session.user) {
-    return {
-      success: false,
-      message: "Unauthorized",
-      data: null,
-      statusCode: 401,
-      code: "UNAUTHORIZED",
-    };
-  }
-
-  const user = session.user;
+export const createCategory = async (
+  input: CategoryCreate
+): Promise<ApiResponse<CategoryType>> => {
+  const user = await getUserServerActions();
 
   const permission = hasPermission(user, "CATEGORY", "CREATE");
 
   if (!permission) {
-    return {
-      success: false,
+    return ApiResponse.error({
       message:
         "Forbidden: You do not have permission to create item categories",
-      data: null,
       statusCode: 403,
-      code: "FORBIDDEN",
-    };
+      code: HTTP_CODES.FORBIDDEN,
+    });
   }
 
   try {
-    const validatedInput = itemCategoryCreateSchema.safeParse(input);
+    const validatedInput = categoryCreateSchema.safeParse(input);
     if (!validatedInput.success) {
-      return {
-        success: false,
+      return ApiResponse.error({
         message: "Validation failed",
-        data: null,
-        error: validatedInput.error.errors,
-        code: "VALIDATION_ERROR",
         statusCode: 400,
-      };
+        code: HTTP_CODES.ZOD_VALIDATION_ERROR,
+        error: validatedInput.error.errors,
+      });
     }
 
     const { data } = validatedInput;
 
-    // Check if the category already exists
-    const existingCategory = await prisma.itemCategory.findUnique({
+    const existingCategory = await prisma.category.findUnique({
       where: {
         name: data.name,
       },
@@ -65,18 +55,15 @@ export const createItemCategory = async (
 
     const isCategoryExists = !!existingCategory;
     if (isCategoryExists) {
-      return {
-        success: false,
-        message: "Item category already exists",
-        data: null,
+      return ApiResponse.error({
+        message: "Item category with same name already exists",
         statusCode: 409,
-        code: "CONFLICT",
-      };
+        code: HTTP_CODES.CONFLICT,
+      });
     }
 
-    // Check for parent category existence if provided
     if (data?.parentId) {
-      const parentCategory = await prisma.itemCategory.findUnique({
+      const parentCategory = await prisma.category.findUnique({
         where: {
           id: data.parentId,
         },
@@ -84,17 +71,14 @@ export const createItemCategory = async (
 
       const isParentCategoryExists = !!parentCategory;
       if (!isParentCategoryExists) {
-        return {
-          success: false,
-          message: "Parent category does not exist",
-          data: null,
+        return ApiResponse.error({
+          message: "Parent category not found",
           statusCode: 404,
-          code: "NOT_FOUND",
-        };
+          code: HTTP_CODES.NOT_FOUND,
+        });
       }
     }
-    // Create the item category
-    const itemCategory = await prisma.itemCategory.create({
+    const category = await prisma.category.create({
       data: {
         name: data.name,
         description: data.description,
@@ -104,85 +88,174 @@ export const createItemCategory = async (
             connect: { id: data.parentId },
           },
         }),
+        user: {
+          connect: { id: user.id },
+        },
       },
     });
 
-    return {
-      success: true,
+    return ApiResponse.success({
+      data: category,
       message: "Item category created successfully",
-      data: itemCategory,
       statusCode: 201,
-    };
+      code: HTTP_CODES.CREATED,
+    });
   } catch (error) {
-    console.error("Validation Error:", error);
-    return {
-      success: false,
-      message: "Invalid input data",
-      data: null,
-      statusCode: 400,
+    const { payload, status } = handleError(error);
+
+    return ApiResponse.error({
+      message: "Failed to create item category",
+      statusCode: status,
+      error: payload.error,
+      code: payload.code,
+    });
+  }
+};
+
+export const getCategories = async (query: {
+  limit?: number;
+  offset?: number;
+  userId?: Cuid;
+}): Promise<
+  ApiResponse<{
+    total: number;
+    data: CategoryType[];
+  }>
+> => {
+  try {
+    const { limit = 10, offset = 0, userId } = query;
+    const safeLimit = Math.min(limit, 100);
+    const safeOffset = Number(offset) || 0;
+
+    const whereClause: CategoryWhereType = {
+      parentId: null,
     };
+
+    if (userId) {
+      const validatedUserId = cuidSchema.safeParse(query.userId);
+      if (!validatedUserId.success) {
+        return ApiResponse.error({
+          message: "Invalid user ID",
+          statusCode: 400,
+          code: HTTP_CODES.ZOD_VALIDATION_ERROR,
+          error: validatedUserId.error.errors,
+        });
+      }
+      whereClause.userId = validatedUserId.data;
+    }
+
+    const [categories, total] = await prisma.$transaction([
+      prisma.category.findMany({
+        where: whereClause,
+        take: safeLimit,
+        skip: safeOffset,
+        orderBy: {
+          name: "asc",
+        },
+      }),
+      prisma.category.count({
+        where: whereClause,
+      }),
+    ]);
+    return ApiResponse.success({
+      data: {
+        total,
+        data: categories,
+      },
+      message: "Item categories fetched successfully",
+      statusCode: 200,
+      code: HTTP_CODES.OK,
+    });
+  } catch (error) {
+    console.error("Error fetching item categories:", error);
+    const { payload, status } = handleError(error);
+    return ApiResponse.error({
+      message: "Failed to fetch item categories",
+      statusCode: status,
+      error: payload.error,
+      code: payload.code,
+    });
   }
 };
 
 export const getItemAllCategories = async (query: {
   limit?: number;
   offset?: number;
+  userId?: Cuid;
 }): Promise<
   ApiResponse<{
     total: number;
-    data: ItemCategoryType[];
+    data: CategoryType[];
   }>
 > => {
   try {
-    const { limit = 10, offset = 0 } = query;
+    const { limit = 10, offset = 0, userId } = query;
+    const safeLimit = Math.min(limit, 100);
+    const safeOffset = Number(offset) || 0;
 
-    const [itemCategories, total] = await prisma.$transaction([
-      prisma.itemCategory.findMany({
-        take: limit,
-        skip: offset,
+    const whereClause: CategoryWhereType = {};
+    if (userId) {
+      const validatedUserId = cuidSchema.safeParse(query.userId);
+      if (!validatedUserId.success) {
+        return ApiResponse.error({
+          message: "Invalid user ID",
+          statusCode: 400,
+          code: HTTP_CODES.ZOD_VALIDATION_ERROR,
+          error: validatedUserId.error.errors,
+        });
+      }
+      whereClause.userId = validatedUserId.data;
+    }
+
+    const [categories, total] = await prisma.$transaction([
+      prisma.category.findMany({
+        where: whereClause,
+        take: safeLimit,
+        skip: safeOffset,
         orderBy: {
           name: "asc",
         },
       }),
-      prisma.itemCategory.count(),
+      prisma.category.count({
+        where: whereClause,
+      }),
     ]);
-    return {
-      success: true,
-      message: "Item categories fetched successfully",
+    return ApiResponse.success({
       data: {
         total,
-        data: itemCategories,
+        data: categories,
       },
+      message: "Item categories fetched successfully",
       statusCode: 200,
-    };
+      code: HTTP_CODES.OK,
+    });
   } catch (error) {
     console.error("Error fetching item categories:", error);
-    return {
-      success: false,
+    const { payload, status } = handleError(error);
+    return ApiResponse.error({
       message: "Failed to fetch item categories",
-      data: null,
-      statusCode: 500,
-      error: error,
-    };
+      statusCode: status,
+      error: payload.error,
+      code: payload.code,
+    });
   }
 };
 
-export const getItemCategoryById = async (
+export const getCategoryById = async (
   id: Cuid
-): Promise<ApiResponse<ItemCategoryType | null>> => {
+): Promise<ApiResponse<CategoryType | null>> => {
   try {
     const validatedId = cuidSchema.safeParse(id);
     if (!validatedId.success) {
-      return {
-        success: false,
+      return ApiResponse.error({
         message: "Invalid category ID",
-        data: null,
         statusCode: 400,
-        code: "VALIDATION_ERROR",
-      };
+        code: HTTP_CODES.ZOD_VALIDATION_ERROR,
+        error: validatedId.error.errors,
+      });
     }
     const { data: validatedIdData } = validatedId;
-    const itemCategory = await prisma.itemCategory.findUnique({
+    const category = await prisma.category.findUnique({
       where: { id: validatedIdData },
       include: {
         parent: true,
@@ -191,184 +264,156 @@ export const getItemCategoryById = async (
       },
     });
 
-    if (!itemCategory) {
-      return {
-        success: false,
+    if (!category) {
+      return ApiResponse.error({
         message: "Item category not found",
-        data: null,
         statusCode: 404,
-        code: "NOT_FOUND",
-      };
+        code: HTTP_CODES.NOT_FOUND,
+      });
     }
 
-    return {
-      success: true,
+    return ApiResponse.success({
+      data: category,
       message: "Item category fetched successfully",
-      data: itemCategory,
       statusCode: 200,
-    };
+      code: HTTP_CODES.OK,
+    });
   } catch (error) {
     console.error("Error fetching item category:", error);
-    return {
-      success: false,
+    const { payload, status } = handleError(error);
+    return ApiResponse.error({
       message: "Failed to fetch item category",
-      data: null,
-      statusCode: 500,
-      error: error,
-    };
+      statusCode: status,
+      error: payload.error,
+      code: payload.code,
+    });
   }
 };
 
-export const deleteItemCategory = async (
+export const deleteCategory = async (
   id: Cuid
-): Promise<ApiResponse<ItemCategoryType | null>> => {
-  const session = await auth();
-  if (!session || !session.user) {
-    return {
-      success: false,
-      message: "Unauthorized",
-      data: null,
-      statusCode: 401,
-      code: "UNAUTHORIZED",
-    };
-  }
-
-  const user = session.user;
-
-  const permission = hasPermission(user, "CATEGORY", "DELETE");
-
-  if (!permission) {
-    return {
-      success: false,
-      message:
-        "Forbidden: You do not have permission to delete item categories",
-      data: null,
-      statusCode: 403,
-      code: "FORBIDDEN",
-    };
-  }
+): Promise<ApiResponse<CategoryType | null>> => {
+  const user = await getUserServerActions();
 
   try {
     const validatedId = cuidSchema.safeParse(id);
     if (!validatedId.success) {
-      return {
-        success: false,
+      return ApiResponse.error({
         message: "Invalid category ID",
-        data: null,
         statusCode: 400,
-        code: "VALIDATION_ERROR",
-      };
+        code: HTTP_CODES.ZOD_VALIDATION_ERROR,
+        error: validatedId.error.errors,
+      });
     }
     const { data: validatedIdData } = validatedId;
 
-    const itemCategory = await prisma.itemCategory.findUnique({
+    const category = await prisma.category.findUnique({
       where: { id: validatedIdData },
     });
 
-    if (!itemCategory) {
-      return {
-        success: false,
+    if (!category) {
+      return ApiResponse.error({
         message: "Item category not found",
-        data: null,
         statusCode: 404,
-        code: "NOT_FOUND",
-      };
+        code: HTTP_CODES.NOT_FOUND,
+      });
     }
 
-    await prisma.itemCategory.delete({
+    const hasPermissionOwnEdit = hasPermission(
+      user,
+      "CATEGORY",
+      "DELETE:OWN",
+      category
+    );
+    if (!hasPermissionOwnEdit && !hasPermission(user, "CATEGORY", "DELETE")) {
+      return ApiResponse.error({
+        message:
+          "Forbidden: You do not have permission to delete item categories",
+        statusCode: 403,
+        code: HTTP_CODES.FORBIDDEN,
+      });
+    }
+
+    await prisma.category.delete({
       where: { id: validatedIdData },
     });
 
-    return {
-      success: true,
+    return ApiResponse.success({
+      data: null,
       message: "Item category deleted successfully",
-      data: itemCategory,
       statusCode: 200,
-      code: "DELETED",
-    };
+      code: HTTP_CODES.DELETED,
+    });
   } catch (error) {
     console.error("Error deleting item category:", error);
-    return {
-      success: false,
+    const { payload, status } = handleError(error);
+    return ApiResponse.error({
       message: "Failed to delete item category",
-      data: null,
-      statusCode: 500,
-      error: error,
-    };
+      statusCode: status,
+      error: payload.error,
+      code: payload.code,
+    });
   }
 };
 
-export const updateItemCategory = async (
+export const updateCategory = async (
   id: Cuid,
-  input: ItemCategoryUpdate
-): Promise<ApiResponse<ItemCategoryType | null>> => {
-  const session = await auth();
-  if (!session?.user) {
-    return {
-      success: false,
-      message: "Unauthorized",
-      data: null,
-      statusCode: 401,
-      code: "UNAUTHORIZED",
-    };
-  }
-
-  const user = session.user;
-
-  if (!hasPermission(user, "CATEGORY", "UPDATE")) {
-    return {
-      success: false,
-      message:
-        "Forbidden: You do not have permission to update item categories",
-      data: null,
-      statusCode: 403,
-      code: "FORBIDDEN",
-    };
-  }
+  input: CategoryUpdate
+): Promise<ApiResponse<CategoryType | null>> => {
+  const user = await getUserServerActions();
 
   try {
     const validatedId = cuidSchema.safeParse(id);
     if (!validatedId.success) {
-      return {
-        success: false,
+      return ApiResponse.error({
         message: "Invalid category ID",
-        data: null,
         statusCode: 400,
-        code: "VALIDATION_ERROR",
-      };
+        code: HTTP_CODES.ZOD_VALIDATION_ERROR,
+        error: validatedId.error.errors,
+      });
     }
     const { data: validatedIdData } = validatedId;
 
-    const existingCategory = await prisma.itemCategory.findUnique({
+    const existingCategory = await prisma.category.findUnique({
       where: { id: validatedIdData },
     });
 
     if (!existingCategory) {
-      return {
-        success: false,
+      return ApiResponse.error({
         message: "Item category not found",
-        data: null,
         statusCode: 404,
-        code: "NOT_FOUND",
-      };
+        code: HTTP_CODES.NOT_FOUND,
+      });
+    }
+    const hasPermissionOwnEdit = hasPermission(
+      user,
+      "CATEGORY",
+      "UPDATE:OWN",
+      existingCategory
+    );
+    if (!hasPermissionOwnEdit && !hasPermission(user, "CATEGORY", "UPDATE")) {
+      return ApiResponse.error({
+        message:
+          "Forbidden: You do not have permission to update item categories",
+        statusCode: 403,
+        code: HTTP_CODES.FORBIDDEN,
+      });
     }
 
-    const validatedInput = itemCategoryUpdateSchema.safeParse(input);
+    const validatedInput = categoryUpdateSchema.safeParse(input);
     if (!validatedInput.success) {
-      return {
-        success: false,
+      return ApiResponse.error({
         message: "Validation failed",
-        data: null,
-        error: validatedInput.error.errors,
-        code: "VALIDATION_ERROR",
         statusCode: 400,
-      };
+        code: HTTP_CODES.ZOD_VALIDATION_ERROR,
+        error: validatedInput.error.errors,
+      });
     }
 
     const { data: validatedInputValues } = validatedInput;
 
     if (validatedInputValues?.name) {
-      const categoryWithSameName = await prisma.itemCategory.findUnique({
+      const categoryWithSameName = await prisma.category.findUnique({
         where: {
           name: validatedInputValues.name,
         },
@@ -376,13 +421,11 @@ export const updateItemCategory = async (
 
       const isCategoryWithSameExists = !!categoryWithSameName;
       if (isCategoryWithSameExists) {
-        return {
-          success: false,
+        return ApiResponse.error({
           message: "Item category with same name already exists",
-          data: null,
           statusCode: 409,
-          code: "CONFLICT",
-        };
+          code: HTTP_CODES.CONFLICT,
+        });
       }
     }
 
@@ -390,35 +433,32 @@ export const updateItemCategory = async (
       validatedInputValues?.parentId &&
       validatedInputValues.parentId === existingCategory.id
     ) {
-      return {
-        success: false,
-        message: "Cannot set the same category as parent",
-        data: null,
+      return ApiResponse.error({
+        message: "Cannot set parent category to itself",
         statusCode: 400,
-        code: "INVALID_PARENT",
-      };
+        code: HTTP_CODES.BAD_REQUEST,
+      });
     }
 
-    const updatedCategory = await prisma.itemCategory.update({
+    const updatedCategory = await prisma.category.update({
       where: { id: validatedIdData },
       data: validatedInputValues,
     });
 
-    return {
-      success: true,
-      message: "Item category updated successfully",
+    return ApiResponse.success({
       data: updatedCategory,
+      message: "Item category updated successfully",
       statusCode: 200,
-      code: "UPDATED",
-    };
+      code: HTTP_CODES.UPDATED,
+    });
   } catch (error) {
     console.error("Error updating item category:", error);
-    return {
-      success: false,
+    const { payload, status } = handleError(error);
+    return ApiResponse.error({
       message: "Failed to update item category",
-      data: null,
-      statusCode: 500,
-      error,
-    };
+      statusCode: status,
+      error: payload.error,
+      code: payload.code,
+    });
   }
 };

@@ -1,4 +1,4 @@
-import { type ItemType } from "@/types/common";
+import { type CategoryType, type ItemType } from "@/types/common";
 import { User } from "next-auth";
 
 type Role = "USER" | "ADMIN" | "BLOCKED";
@@ -8,6 +8,7 @@ type PermissionType =
   | "CREATE"
   | "UPDATE"
   | "DELETE"
+  | "VIEW:OWN"
   | "UPDATE:OWN"
   | "DELETE:OWN";
 
@@ -17,8 +18,13 @@ type ResourceDataTypeMap = {
   ITEM: {
     "UPDATE:OWN": ItemType;
     "DELETE:OWN": ItemType;
+    "VIEW:OWN": ItemType;
   };
-  CATEGORY: undefined;
+  CATEGORY: {
+    "VIEW:OWN": CategoryType;
+    "UPDATE:OWN": CategoryType;
+    "DELETE:OWN": CategoryType;
+  };
 };
 
 type GetResourceData<
@@ -43,11 +49,35 @@ type Permission = {
   };
 };
 
+export const ValidRoles: Role[] = ["USER", "ADMIN", "BLOCKED"];
+export const ValidPermissions: PermissionType[] = [
+  "VIEW",
+  "CREATE",
+  "UPDATE",
+  "DELETE",
+  "VIEW:OWN",
+  "UPDATE:OWN",
+  "DELETE:OWN",
+];
+
+export const ValidResources: ResourceType[] = ["ITEM", "CATEGORY"];
+
 const ItemOWNChecker = <P extends keyof ResourceDataTypeMap["ITEM"]>(
   user: User,
   resource: ResourceDataTypeMap["ITEM"][P]
 ): boolean => {
   if (!user || !resource) return false;
+  if (!resource.userId || !user.id) return false;
+  return user.id === resource.userId;
+};
+
+const CategoryOWNChecker = <P extends keyof ResourceDataTypeMap["CATEGORY"]>(
+  user: User,
+  resource: ResourceDataTypeMap["CATEGORY"][P]
+): boolean => {
+  if (!user || !resource) return false;
+
+  if (!resource.userId || !user.id) return false;
   return user.id === resource.userId;
 };
 
@@ -56,14 +86,13 @@ const permissions: Permission = {
     ITEM: {
       VIEW: true,
       CREATE: true,
-      UPDATE: false,
-      DELETE: false,
+      "VIEW:OWN": ItemOWNChecker,
       "UPDATE:OWN": ItemOWNChecker,
       "DELETE:OWN": ItemOWNChecker,
     },
     CATEGORY: {
       VIEW: true,
-      CREATE: true,
+      CREATE: false,
       UPDATE: false,
       DELETE: false,
     },
@@ -74,12 +103,18 @@ const permissions: Permission = {
       CREATE: true,
       UPDATE: true,
       DELETE: true,
+      "VIEW:OWN": ItemOWNChecker,
+      "UPDATE:OWN": ItemOWNChecker,
+      "DELETE:OWN": ItemOWNChecker,
     },
     CATEGORY: {
       VIEW: true,
       CREATE: true,
       UPDATE: true,
       DELETE: true,
+      "VIEW:OWN": CategoryOWNChecker,
+      "UPDATE:OWN": CategoryOWNChecker,
+      "DELETE:OWN": CategoryOWNChecker,
     },
   },
   BLOCKED: {},
@@ -94,6 +129,10 @@ function hasPermission<T extends ResourceType, P extends PermissionType>(
     : [resourceData: GetResourceData<T, P>]
 ): boolean {
   if (!user?.role) return false;
+
+  if (!ValidRoles.includes(user.role as Role)) return false;
+  if (!ValidResources.includes(resource)) return false;
+  if (!ValidPermissions.includes(permission)) return false;
 
   const rolePermissions = permissions[user.role as Role];
   if (!rolePermissions?.[resource]) return false;
