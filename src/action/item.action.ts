@@ -2,6 +2,7 @@
 
 import { normalizeSlug } from "@/helper/normalize";
 import { ApiResponse } from "@/lib/api.response";
+import { HTTP_CODES } from "@/lib/error/custom.error";
 import { handleError } from "@/lib/error/handleError";
 import { hasPermission } from "@/lib/permission";
 import { prisma } from "@/lib/prisma";
@@ -13,8 +14,11 @@ import {
   type ItemUpdate,
   itemUpdateSchema,
 } from "@/schema/item.schema";
-import { type ItemType, ItemWhereType } from "@/types/common";
-import { HTTP_CODES } from "@/lib/error/custom.error";
+import {
+  type GetIdOrSlugInputType,
+  type ItemType,
+  type ItemWhereType,
+} from "@/types/common";
 
 export const createItem = async (
   input: ItemCreate
@@ -31,32 +35,35 @@ export const createItem = async (
     });
   }
 
+  const validatedInput = itemCreateSchema.safeParse(input);
+  if (!validatedInput.success) {
+    return ApiResponse.error({
+      message: "Validation failed",
+      error: validatedInput.error.errors,
+      code: HTTP_CODES.ZOD_VALIDATION_ERROR,
+      statusCode: 400,
+    });
+  }
+
+  const { data } = validatedInput;
+
+  let slug = data.name;
+
+  if (data.slug) {
+    slug = normalizeSlug(data.slug);
+  } else {
+    slug = normalizeSlug(
+      `${data.name}-${Math.random().toString(36).substring(2, 10)}`
+    );
+  }
+
   try {
-    const validatedInput = itemCreateSchema.safeParse(input);
-    if (!validatedInput.success) {
-      return ApiResponse.error({
-        message: "Validation failed",
-        error: validatedInput.error.errors,
-        code: HTTP_CODES.ZOD_VALIDATION_ERROR,
-        statusCode: 400,
-      });
-    }
-
-    const { data } = validatedInput;
-
-    let slug = data.name;
-
-    if (data.slug) {
-      slug = normalizeSlug(data.slug);
-    } else {
-      slug = normalizeSlug(
-        `${data.name}-${Math.random().toString(36).substring(2, 10)}`
-      );
-    }
-
     const existingItemsWithSameSlug = await prisma.item.findUnique({
       where: {
         slug: slug,
+      },
+      select: {
+        id: true,
       },
     });
 
@@ -122,38 +129,38 @@ export const getAllItem = async (query: {
     data: ItemType[];
   }>
 > => {
+  const { limit = 10, offset = 0 } = query;
+  const safeLimit = Math.min(limit, 100);
+  const safeOffset = Number(offset) || 0;
+
+  const whereClause: ItemWhereType = {};
+  if (query.userId) {
+    const validatedUserId = cuidSchema.safeParse(query.userId);
+    if (!validatedUserId.success) {
+      return ApiResponse.error({
+        message: "Invalid User ID",
+        statusCode: 400,
+        code: HTTP_CODES.ZOD_VALIDATION_ERROR,
+        error: validatedUserId.error.errors,
+      });
+    }
+    whereClause.userId = validatedUserId.data;
+  }
+
+  if (query.categoryId) {
+    const validatedCategoryId = cuidSchema.safeParse(query.categoryId);
+    if (!validatedCategoryId.success) {
+      return ApiResponse.error({
+        message: "Invalid Category ID",
+        statusCode: 400,
+        code: HTTP_CODES.ZOD_VALIDATION_ERROR,
+        error: validatedCategoryId.error.errors,
+      });
+    }
+    whereClause.categoryId = validatedCategoryId.data;
+  }
+
   try {
-    const { limit = 10, offset = 0 } = query;
-    const safeLimit = Math.min(limit, 100);
-    const safeOffset = Number(offset) || 0;
-
-    const whereClause: ItemWhereType = {};
-    if (query.userId) {
-      const validatedUserId = cuidSchema.safeParse(query.userId);
-      if (!validatedUserId.success) {
-        return ApiResponse.error({
-          message: "Invalid User ID",
-          statusCode: 400,
-          code: HTTP_CODES.ZOD_VALIDATION_ERROR,
-          error: validatedUserId.error.errors,
-        });
-      }
-      whereClause.userId = validatedUserId.data;
-    }
-
-    if (query.categoryId) {
-      const validatedCategoryId = cuidSchema.safeParse(query.categoryId);
-      if (!validatedCategoryId.success) {
-        return ApiResponse.error({
-          message: "Invalid Category ID",
-          statusCode: 400,
-          code: HTTP_CODES.ZOD_VALIDATION_ERROR,
-          error: validatedCategoryId.error.errors,
-        });
-      }
-      whereClause.categoryId = validatedCategoryId.data;
-    }
-
     const [item, total] = await prisma.$transaction([
       prisma.item.findMany({
         where: whereClause,
@@ -198,22 +205,47 @@ export const getAllItem = async (query: {
   }
 };
 
-export const getItemById = async (
-  id: Cuid
-): Promise<ApiResponse<ItemType | null>> => {
-  try {
+export const getItemById = async ({
+  id,
+  slug,
+}: GetIdOrSlugInputType): Promise<ApiResponse<ItemType | null>> => {
+  if (!id && !slug) {
+    return ApiResponse.error({
+      message: "Category ID or slug is required",
+      statusCode: 400,
+      code: HTTP_CODES.BAD_REQUEST,
+    });
+  }
+
+  const whereClause: ItemWhereType = {};
+  if (id) {
     const validatedId = cuidSchema.safeParse(id);
     if (!validatedId.success) {
       return ApiResponse.error({
-        message: "Invalid Item ID",
+        message: "Invalid category ID",
         statusCode: 400,
         code: HTTP_CODES.ZOD_VALIDATION_ERROR,
         error: validatedId.error.errors,
       });
     }
-    const { data: validatedIdData } = validatedId;
-    const item = await prisma.item.findUnique({
-      where: { id: validatedIdData },
+    whereClause.id = validatedId.data;
+  }
+
+  if (slug) {
+    const normalizedSlug = normalizeSlug(slug);
+    if (!normalizedSlug) {
+      return ApiResponse.error({
+        message: "Invalid category slug",
+        statusCode: 400,
+        code: HTTP_CODES.BAD_REQUEST,
+        error: "Category slug cannot be empty",
+      });
+    }
+    whereClause.slug = normalizedSlug;
+  }
+  try {
+    const item = await prisma.item.findFirst({
+      where: whereClause,
       include: {
         category: true,
         user: {
@@ -257,21 +289,24 @@ export const updateItem = async (
   input: ItemUpdate
 ): Promise<ApiResponse<ItemType | null>> => {
   const user = await getUserServerActions();
+  const validatedId = cuidSchema.safeParse(id);
+  if (!validatedId.success) {
+    return ApiResponse.error({
+      message: "Invalid Item ID",
+      statusCode: 400,
+      code: HTTP_CODES.ZOD_VALIDATION_ERROR,
+      error: validatedId.error.errors,
+    });
+  }
+  const { data: validatedIdData } = validatedId;
 
   try {
-    const validatedId = cuidSchema.safeParse(id);
-    if (!validatedId.success) {
-      return ApiResponse.error({
-        message: "Invalid Item ID",
-        statusCode: 400,
-        code: HTTP_CODES.ZOD_VALIDATION_ERROR,
-        error: validatedId.error.errors,
-      });
-    }
-    const { data: validatedIdData } = validatedId;
-
     const existingItems = await prisma.item.findUnique({
       where: { id: validatedIdData },
+      select: {
+        id: true,
+        userId: true,
+      },
     });
 
     if (!existingItems) {
@@ -309,13 +344,16 @@ export const updateItem = async (
     }
 
     const { data: validatedInputValues } = validatedInput;
-    const { slug: slugInput, ...rest } = validatedInputValues;
+    const { categoryId, slug: slugInput, ...rest } = validatedInputValues;
 
     const slug = slugInput ? normalizeSlug(slugInput) : null;
     if (slug) {
-      const itemWithSameSlug = await prisma.item.findUnique({
+      const itemWithSameSlug = await prisma.item.findFirst({
         where: {
-          slug: slug,
+          OR: [{ slug: slug, id: { not: validatedIdData } }],
+        },
+        select: {
+          id: true,
         },
       });
 
@@ -329,11 +367,39 @@ export const updateItem = async (
       }
     }
 
+    if (categoryId) {
+      const validatedCategoryId = cuidSchema.safeParse(categoryId);
+      if (!validatedCategoryId.success) {
+        return ApiResponse.error({
+          message: "Invalid Category ID",
+          statusCode: 400,
+          code: HTTP_CODES.ZOD_VALIDATION_ERROR,
+          error: validatedCategoryId.error.errors,
+        });
+      }
+      const { data: validatedCategoryIdData } = validatedCategoryId;
+      const categoryExists = await prisma.category.findUnique({
+        where: { id: validatedCategoryIdData },
+      });
+      if (!categoryExists) {
+        return ApiResponse.error({
+          message: "Category not found",
+          statusCode: 404,
+          code: HTTP_CODES.NOT_FOUND,
+        });
+      }
+    }
+
     const updatedItem = await prisma.item.update({
       where: { id: validatedIdData },
       data: {
         ...rest,
-        ...(slug != null && { slug }),
+        ...(slug && { slug }),
+        ...(categoryId && {
+          category: {
+            connect: { id: categoryId },
+          },
+        }),
       },
       include: {
         category: true,
@@ -370,18 +436,18 @@ export const deleteItem = async (
 ): Promise<ApiResponse<ItemType | null>> => {
   const user = await getUserServerActions();
 
-  try {
-    const validatedId = cuidSchema.safeParse(id);
-    if (!validatedId.success) {
-      return ApiResponse.error({
-        message: "Invalid Item ID",
-        statusCode: 400,
-        code: HTTP_CODES.ZOD_VALIDATION_ERROR,
-        error: validatedId.error.errors,
-      });
-    }
-    const { data: validatedIdData } = validatedId;
+  const validatedId = cuidSchema.safeParse(id);
+  if (!validatedId.success) {
+    return ApiResponse.error({
+      message: "Invalid Item ID",
+      statusCode: 400,
+      code: HTTP_CODES.ZOD_VALIDATION_ERROR,
+      error: validatedId.error.errors,
+    });
+  }
+  const { data: validatedIdData } = validatedId;
 
+  try {
     const item = await prisma.item.findUnique({
       where: { id: validatedIdData },
     });

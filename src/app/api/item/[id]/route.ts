@@ -1,5 +1,6 @@
 import { deleteItem, getItemById, updateItem } from "@/action/item.action";
 import { tryCatchWrapper } from "@/helper/tryCatchWarper";
+import { buildIdOrSlugInput } from "@/utils/inputValidators";
 import { type NextRequest } from "next/server";
 
 export async function GET(
@@ -7,7 +8,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  return tryCatchWrapper(getItemById, id);
+    const input = buildIdOrSlugInput(id);
+  
+  return tryCatchWrapper(getItemById, input);
 }
 
 export async function DELETE(

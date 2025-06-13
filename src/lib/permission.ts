@@ -21,14 +21,14 @@ type ResourceType = "ITEM" | "CATEGORY";
 
 type ResourceDataTypeMap = {
   ITEM: {
-    "UPDATE:OWN": ItemType;
-    "DELETE:OWN": ItemType;
-    "VIEW:OWN": ItemType;
+    "UPDATE:OWN": Pick<ItemType, "userId">;
+    "DELETE:OWN": Pick<ItemType, "userId">;
+    "VIEW:OWN": Pick<ItemType, "userId">;
   };
   CATEGORY: {
-    "VIEW:OWN": CategoryType;
-    "UPDATE:OWN": CategoryType;
-    "DELETE:OWN": CategoryType;
+    "VIEW:OWN": Pick<CategoryType, "userId">;
+    "UPDATE:OWN": Pick<CategoryType, "userId">;
+    "DELETE:OWN": Pick<CategoryType, "userId">;
   };
 };
 

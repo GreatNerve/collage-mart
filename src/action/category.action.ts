@@ -1,6 +1,8 @@
 "use server";
 
+import { normalizeSlug } from "@/helper/normalize";
 import { ApiResponse } from "@/lib/api.response";
+import { HTTP_CODES } from "@/lib/error/custom.error";
 import { handleError } from "@/lib/error/handleError";
 import { hasPermission } from "@/lib/permission";
 import { prisma } from "@/lib/prisma";
@@ -14,9 +16,9 @@ import {
 import { type Cuid, cuidSchema } from "@/schema/common.schema";
 import {
   type CategoryType,
-  CategoryWhereType,
+  type CategoryWhereType,
+  type GetIdOrSlugInputType,
 } from "@/types/common";
-import { HTTP_CODES } from "@/lib/error/custom.error";
 
 export const createCategory = async (
   input: CategoryCreate
@@ -34,27 +36,39 @@ export const createCategory = async (
     });
   }
 
+  const validatedInput = categoryCreateSchema.safeParse(input);
+  if (!validatedInput.success) {
+    return ApiResponse.error({
+      message: "Validation failed",
+      statusCode: 400,
+      code: HTTP_CODES.ZOD_VALIDATION_ERROR,
+      error: validatedInput.error.errors,
+    });
+  }
+
+  const { name, description, images = [], parentId } = validatedInput.data;
+  const slug = normalizeSlug(name);
+  if (!slug) {
+    return ApiResponse.error({
+      message: "Invalid category name, slug cannot be empty",
+      statusCode: 400,
+      code: HTTP_CODES.BAD_REQUEST,
+      error: "Category name needs to url friendly slug",
+    });
+  }
+  const normalizedSlug = normalizeSlug(slug);
+
   try {
-    const validatedInput = categoryCreateSchema.safeParse(input);
-    if (!validatedInput.success) {
-      return ApiResponse.error({
-        message: "Validation failed",
-        statusCode: 400,
-        code: HTTP_CODES.ZOD_VALIDATION_ERROR,
-        error: validatedInput.error.errors,
-      });
-    }
-
-    const { data } = validatedInput;
-
-    const existingCategory = await prisma.category.findUnique({
+    const existingCategory = await prisma.category.findFirst({
       where: {
-        name: data.name,
+        OR: [{ name: name }, { slug: slug }],
+      },
+      select: {
+        id: true,
       },
     });
 
-    const isCategoryExists = !!existingCategory;
-    if (isCategoryExists) {
+    if (existingCategory) {
       return ApiResponse.error({
         message: "Item category with same name already exists",
         statusCode: 409,
@@ -62,15 +76,17 @@ export const createCategory = async (
       });
     }
 
-    if (data?.parentId) {
+    if (parentId) {
       const parentCategory = await prisma.category.findUnique({
         where: {
-          id: data.parentId,
+          id: parentId,
+        },
+        select: {
+          id: true,
         },
       });
 
-      const isParentCategoryExists = !!parentCategory;
-      if (!isParentCategoryExists) {
+      if (!parentCategory) {
         return ApiResponse.error({
           message: "Parent category not found",
           statusCode: 404,
@@ -80,12 +96,13 @@ export const createCategory = async (
     }
     const category = await prisma.category.create({
       data: {
-        name: data.name,
-        description: data.description,
-        images: data.images || [],
-        ...(data.parentId && {
+        name: name,
+        description: description,
+        images: images || [],
+        slug: normalizedSlug,
+        ...(parentId && {
           parent: {
-            connect: { id: data.parentId },
+            connect: { id: parentId },
           },
         }),
         user: {
@@ -122,28 +139,27 @@ export const getCategories = async (query: {
     data: CategoryType[];
   }>
 > => {
-  try {
-    const { limit = 10, offset = 0, userId } = query;
-    const safeLimit = Math.min(limit, 100);
-    const safeOffset = Number(offset) || 0;
+  const { limit = 10, offset = 0, userId } = query;
+  const safeLimit = Math.min(limit, 100);
+  const safeOffset = Number(offset) || 0;
 
-    const whereClause: CategoryWhereType = {
-      parentId: null,
-    };
+  const whereClause: CategoryWhereType = {
+    parentId: null,
+  };
 
-    if (userId) {
-      const validatedUserId = cuidSchema.safeParse(query.userId);
-      if (!validatedUserId.success) {
-        return ApiResponse.error({
-          message: "Invalid user ID",
-          statusCode: 400,
-          code: HTTP_CODES.ZOD_VALIDATION_ERROR,
-          error: validatedUserId.error.errors,
-        });
-      }
-      whereClause.userId = validatedUserId.data;
+  if (userId) {
+    const validatedUserId = cuidSchema.safeParse(query.userId);
+    if (!validatedUserId.success) {
+      return ApiResponse.error({
+        message: "Invalid user ID",
+        statusCode: 400,
+        code: HTTP_CODES.ZOD_VALIDATION_ERROR,
+        error: validatedUserId.error.errors,
+      });
     }
-
+    whereClause.userId = validatedUserId.data;
+  }
+  try {
     const [categories, total] = await prisma.$transaction([
       prisma.category.findMany({
         where: whereClause,
@@ -188,25 +204,24 @@ export const getItemAllCategories = async (query: {
     data: CategoryType[];
   }>
 > => {
-  try {
-    const { limit = 10, offset = 0, userId } = query;
-    const safeLimit = Math.min(limit, 100);
-    const safeOffset = Number(offset) || 0;
+  const { limit = 10, offset = 0, userId } = query;
+  const safeLimit = Math.min(limit, 100);
+  const safeOffset = Number(offset) || 0;
 
-    const whereClause: CategoryWhereType = {};
-    if (userId) {
-      const validatedUserId = cuidSchema.safeParse(query.userId);
-      if (!validatedUserId.success) {
-        return ApiResponse.error({
-          message: "Invalid user ID",
-          statusCode: 400,
-          code: HTTP_CODES.ZOD_VALIDATION_ERROR,
-          error: validatedUserId.error.errors,
-        });
-      }
-      whereClause.userId = validatedUserId.data;
+  const whereClause: CategoryWhereType = {};
+  if (userId) {
+    const validatedUserId = cuidSchema.safeParse(query.userId);
+    if (!validatedUserId.success) {
+      return ApiResponse.error({
+        message: "Invalid user ID",
+        statusCode: 400,
+        code: HTTP_CODES.ZOD_VALIDATION_ERROR,
+        error: validatedUserId.error.errors,
+      });
     }
-
+    whereClause.userId = validatedUserId.data;
+  }
+  try {
     const [categories, total] = await prisma.$transaction([
       prisma.category.findMany({
         where: whereClause,
@@ -241,10 +256,20 @@ export const getItemAllCategories = async (query: {
   }
 };
 
-export const getCategoryById = async (
-  id: Cuid
-): Promise<ApiResponse<CategoryType | null>> => {
-  try {
+export const getCategoryByIdORSlug = async ({
+  id,
+  slug,
+}: GetIdOrSlugInputType): Promise<ApiResponse<CategoryType | null>> => {
+  if (!id && !slug) {
+    return ApiResponse.error({
+      message: "Category ID or slug is required",
+      statusCode: 400,
+      code: HTTP_CODES.BAD_REQUEST,
+    });
+  }
+
+  const whereClause: CategoryWhereType = {};
+  if (id) {
     const validatedId = cuidSchema.safeParse(id);
     if (!validatedId.success) {
       return ApiResponse.error({
@@ -254,9 +279,25 @@ export const getCategoryById = async (
         error: validatedId.error.errors,
       });
     }
-    const { data: validatedIdData } = validatedId;
-    const category = await prisma.category.findUnique({
-      where: { id: validatedIdData },
+    whereClause.id = validatedId.data;
+  }
+
+  if (slug) {
+    const normalizedSlug = normalizeSlug(slug);
+    if (!normalizedSlug) {
+      return ApiResponse.error({
+        message: "Invalid category slug",
+        statusCode: 400,
+        code: HTTP_CODES.BAD_REQUEST,
+        error: "Category slug cannot be empty",
+      });
+    }
+    whereClause.slug = normalizedSlug;
+  }
+
+  try {
+    const category = await prisma.category.findFirst({
+      where: whereClause,
       include: {
         parent: true,
         children: true,
@@ -294,19 +335,18 @@ export const deleteCategory = async (
   id: Cuid
 ): Promise<ApiResponse<CategoryType | null>> => {
   const user = await getUserServerActions();
+  const validatedId = cuidSchema.safeParse(id);
+  if (!validatedId.success) {
+    return ApiResponse.error({
+      message: "Invalid category ID",
+      statusCode: 400,
+      code: HTTP_CODES.ZOD_VALIDATION_ERROR,
+      error: validatedId.error.errors,
+    });
+  }
+  const { data: validatedIdData } = validatedId;
 
   try {
-    const validatedId = cuidSchema.safeParse(id);
-    if (!validatedId.success) {
-      return ApiResponse.error({
-        message: "Invalid category ID",
-        statusCode: 400,
-        code: HTTP_CODES.ZOD_VALIDATION_ERROR,
-        error: validatedId.error.errors,
-      });
-    }
-    const { data: validatedIdData } = validatedId;
-
     const category = await prisma.category.findUnique({
       where: { id: validatedIdData },
     });
@@ -361,21 +401,25 @@ export const updateCategory = async (
   input: CategoryUpdate
 ): Promise<ApiResponse<CategoryType | null>> => {
   const user = await getUserServerActions();
+  const validatedId = cuidSchema.safeParse(id);
+  if (!validatedId.success) {
+    return ApiResponse.error({
+      message: "Invalid category ID",
+      statusCode: 400,
+      code: HTTP_CODES.ZOD_VALIDATION_ERROR,
+      error: validatedId.error.errors,
+    });
+  }
+  const { data: validatedIdData } = validatedId;
 
   try {
-    const validatedId = cuidSchema.safeParse(id);
-    if (!validatedId.success) {
-      return ApiResponse.error({
-        message: "Invalid category ID",
-        statusCode: 400,
-        code: HTTP_CODES.ZOD_VALIDATION_ERROR,
-        error: validatedId.error.errors,
-      });
-    }
-    const { data: validatedIdData } = validatedId;
-
     const existingCategory = await prisma.category.findUnique({
       where: { id: validatedIdData },
+      select: {
+        id: true,
+        userId: true,
+        parentId: true,
+      },
     });
 
     if (!existingCategory) {
@@ -410,29 +454,47 @@ export const updateCategory = async (
       });
     }
 
-    const { data: validatedInputValues } = validatedInput;
+    const { parentId: updateParentId, ...inputValues } = validatedInput.data;
 
-    if (validatedInputValues?.name) {
-      const categoryWithSameName = await prisma.category.findUnique({
+    const updateValues: Partial<Omit<CategoryUpdate, "parentId">> & {
+      slug?: string;
+    } = inputValues;
+
+    if (updateValues.name) {
+      const slug = normalizeSlug(updateValues.name);
+
+      if (!slug) {
+        return ApiResponse.error({
+          message: "Invalid category name, slug cannot be empty",
+          statusCode: 400,
+          code: HTTP_CODES.BAD_REQUEST,
+          error: "Category name needs to url friendly slug",
+        });
+      }
+
+      const isSameNewNameSlugExist = await prisma.category.findFirst({
         where: {
-          name: validatedInputValues.name,
+          AND: [
+            { id: { not: validatedIdData } },
+            {
+              OR: [{ name: updateValues.name }, { slug: slug }],
+            },
+          ],
+        },
+        select: {
+          id: true,
         },
       });
-
-      const isCategoryWithSameExists = !!categoryWithSameName;
-      if (isCategoryWithSameExists) {
+      if (isSameNewNameSlugExist) {
         return ApiResponse.error({
           message: "Item category with same name already exists",
           statusCode: 409,
           code: HTTP_CODES.CONFLICT,
         });
       }
+      updateValues.slug = normalizeSlug(slug);
     }
-
-    if (
-      validatedInputValues?.parentId &&
-      validatedInputValues.parentId === existingCategory.id
-    ) {
+    if (updateParentId && updateParentId === existingCategory.id) {
       return ApiResponse.error({
         message: "Cannot set parent category to itself",
         statusCode: 400,
@@ -442,7 +504,19 @@ export const updateCategory = async (
 
     const updatedCategory = await prisma.category.update({
       where: { id: validatedIdData },
-      data: validatedInputValues,
+      data: {
+        ...updateValues,
+        ...(updateParentId && {
+          parent: {
+            connect: { id: updateParentId },
+          },
+        }),
+      },
+      include: {
+        parent: true,
+        children: true,
+        items: true,
+      },
     });
 
     return ApiResponse.success({
